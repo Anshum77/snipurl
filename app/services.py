@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import random
 import string
@@ -5,9 +6,18 @@ import string
 from sqlalchemy.orm import Session
 
 from app import crud
+from app.cache import get_cached_url, set_cached_url
 from app.models import URL, ClickEvent
 
 CHARACTERS = string.ascii_letters + string.digits
+
+
+@dataclass
+class RedirectURLData:
+    id: int
+    short_code: str
+    original_url: str
+    expires_at: datetime | None
 
 
 def generate_short_code(length: int = 6) -> str:
@@ -46,6 +56,7 @@ def create_short_url(
         original_url=original_url,
         expires_at=expires_at,
     )
+    set_cached_url(serialize_url_for_cache(url_entry))
 
     return {
         "short_code": url_entry.short_code,
@@ -55,25 +66,77 @@ def create_short_url(
     }
 
 
+def serialize_url_for_cache(url_entry: URL) -> dict[str, str | int | None]:
+    return {
+        "id": url_entry.id,
+        "short_code": url_entry.short_code,
+        "original_url": url_entry.original_url,
+        "expires_at": url_entry.expires_at,
+    }
+
+
+def build_redirect_url_data_from_db(url_entry: URL) -> RedirectURLData:
+    return RedirectURLData(
+        id=url_entry.id,
+        short_code=url_entry.short_code,
+        original_url=url_entry.original_url,
+        expires_at=url_entry.expires_at,
+    )
+
+
+def build_redirect_url_data_from_cache(
+    cached_url: dict[str, str | int | None],
+) -> RedirectURLData:
+    cached_expires_at = cached_url.get("expires_at")
+    expires_at = None
+    if isinstance(cached_expires_at, str):
+        expires_at = datetime.fromisoformat(cached_expires_at)
+
+    return RedirectURLData(
+        id=int(cached_url["id"]),
+        short_code=str(cached_url["short_code"]),
+        original_url=str(cached_url["original_url"]),
+        expires_at=expires_at,
+    )
+
+
 def get_original_url(db: Session, short_code: str) -> URL | None:
     return crud.get_url_by_short_code(db, short_code)
 
 
-def is_url_expired(url_entry: URL) -> bool:
+def get_url_for_redirect(db: Session, short_code: str) -> RedirectURLData | None:
+    cached_url = get_cached_url(short_code)
+    if cached_url:
+        try:
+            return build_redirect_url_data_from_cache(cached_url)
+        except (KeyError, TypeError, ValueError):
+            # Bad cache data should degrade to a DB read instead of breaking redirects.
+            pass
+
+    url_entry = crud.get_url_by_short_code(db, short_code)
+    if not url_entry:
+        return None
+
+    # Populate Redis after a DB miss so later redirects can skip the lookup query.
+    set_cached_url(serialize_url_for_cache(url_entry))
+    return build_redirect_url_data_from_db(url_entry)
+
+
+def is_url_expired(expires_at: datetime | None) -> bool:
     # Links without an expiration date stay active indefinitely.
-    return url_entry.expires_at is not None and url_entry.expires_at <= datetime.now(timezone.utc)
+    return expires_at is not None and expires_at <= datetime.now(timezone.utc)
 
 
 def record_click_event(
     db: Session,
-    url_entry: URL,
+    url_id: int,
     ip_address: str | None = None,
     user_agent: str | None = None,
     referrer: str | None = None,
 ) -> ClickEvent:
     return crud.create_click_event(
         db=db,
-        url_id=url_entry.id,
+        url_id=url_id,
         ip_address=ip_address,
         user_agent=user_agent,
         referrer=referrer,

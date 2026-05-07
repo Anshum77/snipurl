@@ -10,6 +10,7 @@ SnipURL currently supports:
 - custom aliases such as `/portfolio`
 - optional link expiration
 - HTTP `307` redirects
+- Redis caching for short-code lookups
 - click event tracking for every redirect
 - stats endpoint with total clicks and recent visits
 - PostgreSQL persistence with SQLAlchemy ORM
@@ -20,6 +21,7 @@ SnipURL currently supports:
 - `POST /shorten` creates a short URL for a long URL
 - optional `custom_alias` support for human-readable links
 - optional `expires_in_days` support for temporary links
+- Redis cache-aside lookup for redirect performance
 - `GET /{short_code}` redirects to the original URL
 - `GET /{short_code}/stats` returns click analytics for a short URL
 - request validation using Pydantic
@@ -30,6 +32,7 @@ SnipURL currently supports:
 ```text
 app/
 |-- config.py         # environment variables
+|-- cache.py          # Redis cache helpers
 |-- crud.py           # database queries
 |-- database.py       # engine, session, base
 |-- dependencies.py   # shared FastAPI dependencies
@@ -60,6 +63,8 @@ Copy-Item .env.example .env
 # Update .env with your local values:
 # DATABASE_URL=postgresql://username:password@localhost:5432/snipurl
 # APP_BASE_URL=http://127.0.0.1:8000
+# REDIS_URL=redis://localhost:6379/0
+# REDIS_CACHE_TTL_SECONDS=3600
 
 # Start the server
 uvicorn app.main:app --reload
@@ -103,6 +108,7 @@ GET /portfolio/stats
 
 - Backend: Python, FastAPI
 - Database: PostgreSQL, SQLAlchemy
+- Cache: Redis
 - Validation: Pydantic
 - Server: Uvicorn
 
@@ -113,12 +119,12 @@ Implemented:
 - URL shortening
 - custom aliases
 - link expiration
+- Redis caching
 - click tracking
 - basic analytics endpoint
 
 Planned next:
 
-- Redis caching
 - rate limiting
 - richer analytics
 - Docker setup

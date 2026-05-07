@@ -11,6 +11,7 @@ from app.services import (
     build_url_stats,
     create_short_url,
     get_original_url,
+    get_url_for_redirect,
     is_url_expired,
     record_click_event,
 )
@@ -53,22 +54,22 @@ def get_url_stats(short_code: str, db: Session = Depends(get_db)):
 
 @app.get("/{short_code}")
 def redirect_to_url(short_code: str, request: Request, db: Session = Depends(get_db)):
-    url_entry = get_original_url(db, short_code)
+    url_data = get_url_for_redirect(db, short_code)
 
-    if not url_entry:
+    if not url_data:
         raise HTTPException(status_code=404, detail="Short URL not found")
-    if is_url_expired(url_entry):
+    if is_url_expired(url_data.expires_at):
         # 410 signals that the short link existed before but is no longer valid.
         raise HTTPException(status_code=410, detail="Short URL has expired")
 
-    # Capture basic request metadata now so analytics can show who clicked and from where.
+    # Cache hits can skip the URL lookup query, but analytics still belong in Postgres.
     record_click_event(
         db=db,
-        url_entry=url_entry,
+        url_id=url_data.id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
         referrer=request.headers.get("referer"),
     )
 
     # A 307 redirect preserves the original HTTP method.
-    return RedirectResponse(url=url_entry.original_url, status_code=307)
+    return RedirectResponse(url=url_data.original_url, status_code=307)
