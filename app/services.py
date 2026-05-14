@@ -4,12 +4,14 @@ import random
 import string
 
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app import crud
 from app.cache import get_cached_url, set_cached_url
 from app.models import URL, ClickEvent
 
 CHARACTERS = string.ascii_letters + string.digits
+MAX_SHORT_CODE_RETRIES = 5
 
 
 @dataclass
@@ -39,23 +41,27 @@ def create_short_url(
     custom_alias: str | None = None,
     expires_in_days: int | None = None,
 ) -> dict[str, str | datetime | None]:
-    short_code = custom_alias or generate_short_code()
-
-    # Custom aliases are user-chosen, so we fail fast instead of silently changing them.
-    if custom_alias and crud.get_url_by_short_code(db, custom_alias):
-        raise ValueError("Custom alias is already taken")
-
-    # Randomly generated aliases can be retried until we find a free code.
-    while not custom_alias and crud.get_url_by_short_code(db, short_code):
-        short_code = generate_short_code()
-
     expires_at = build_expiration_datetime(expires_in_days)
-    url_entry = crud.create_url(
-        db,
-        short_code=short_code,
-        original_url=original_url,
-        expires_at=expires_at,
-    )
+    url_entry = None
+
+    # Let the database unique constraint make the final decision to avoid race conditions.
+    for _ in range(MAX_SHORT_CODE_RETRIES):
+        short_code = custom_alias or generate_short_code()
+        try:
+            url_entry = crud.create_url(
+                db,
+                short_code=short_code,
+                original_url=original_url,
+                expires_at=expires_at,
+            )
+            break
+        except IntegrityError:
+            if custom_alias:
+                raise ValueError("Custom alias is already taken") from None
+
+    if url_entry is None:
+        raise ValueError("Could not generate a unique short code. Please try again.")
+
     set_cached_url(serialize_url_for_cache(url_entry))
 
     return {

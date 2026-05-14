@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import URL, ClickEvent
@@ -22,7 +23,11 @@ def create_url(
         expires_at=expires_at,
     )
     db.add(new_url)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise
     db.refresh(new_url)
     return new_url
 
