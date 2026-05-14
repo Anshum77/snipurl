@@ -3,9 +3,10 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
-from app.config import APP_BASE_URL
+from app.config import APP_BASE_URL, RATE_LIMIT_REDIRECT, RATE_LIMIT_SHORTEN, RATE_LIMIT_STATS
 from app.database import engine, Base
 from app.dependencies import get_db
+from app.rate_limiter import check_rate_limit
 from app.schemas import URLRequest, URLResponse, URLStatsResponse
 from app.services import (
     build_url_stats,
@@ -22,13 +23,30 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI()
 
 
+def enforce_rate_limit(request: Request, scope: str, limit: int) -> None:
+    client_ip = request.client.host if request.client else "unknown"
+    rate_limit_result = check_rate_limit(scope=scope, client_id=client_ip, limit=limit)
+
+    if not rate_limit_result.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Rate limit exceeded for {scope}. "
+                f"Try again in {rate_limit_result.retry_after} seconds."
+            ),
+        )
+
+
 @app.get("/")
 def root():
     return {"message": "SnipURL is running"}
 
 
 @app.post("/shorten", response_model=URLResponse)
-def shorten_url(request: URLRequest, db: Session = Depends(get_db)):
+def shorten_url(request: URLRequest, http_request: Request, db: Session = Depends(get_db)):
+    # URL creation is the easiest endpoint to spam, so it gets the strictest limit.
+    enforce_rate_limit(http_request, scope="shorten", limit=RATE_LIMIT_SHORTEN)
+
     try:
         return create_short_url(
             db=db,
@@ -43,7 +61,10 @@ def shorten_url(request: URLRequest, db: Session = Depends(get_db)):
 
 
 @app.get("/{short_code}/stats", response_model=URLStatsResponse)
-def get_url_stats(short_code: str, db: Session = Depends(get_db)):
+def get_url_stats(short_code: str, request: Request, db: Session = Depends(get_db)):
+    # Analytics endpoints are useful but can be scraped repeatedly, so we limit them too.
+    enforce_rate_limit(request, scope="stats", limit=RATE_LIMIT_STATS)
+
     url_entry = get_original_url(db, short_code)
 
     if not url_entry:
@@ -54,6 +75,9 @@ def get_url_stats(short_code: str, db: Session = Depends(get_db)):
 
 @app.get("/{short_code}")
 def redirect_to_url(short_code: str, request: Request, db: Session = Depends(get_db)):
+    # Redirect traffic is expected to be high, so this limit is intentionally looser.
+    enforce_rate_limit(request, scope="redirect", limit=RATE_LIMIT_REDIRECT)
+
     url_data = get_url_for_redirect(db, short_code)
 
     if not url_data:
