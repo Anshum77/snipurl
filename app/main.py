@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from starlette.requests import Request
@@ -14,7 +14,7 @@ from app.services import (
     get_original_url,
     get_url_for_redirect,
     is_url_expired,
-    record_click_event,
+    record_click_event_in_background,
 )
 
 # Create tables automatically for the current SQLAlchemy models.
@@ -74,7 +74,12 @@ def get_url_stats(short_code: str, request: Request, db: Session = Depends(get_d
 
 
 @app.get("/{short_code}")
-def redirect_to_url(short_code: str, request: Request, db: Session = Depends(get_db)):
+def redirect_to_url(
+    short_code: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     # Redirect traffic is expected to be high, so this limit is intentionally looser.
     enforce_rate_limit(request, scope="redirect", limit=RATE_LIMIT_REDIRECT)
 
@@ -86,9 +91,9 @@ def redirect_to_url(short_code: str, request: Request, db: Session = Depends(get
         # 410 signals that the short link existed before but is no longer valid.
         raise HTTPException(status_code=410, detail="Short URL has expired")
 
-    # Cache hits can skip the URL lookup query, but analytics still belong in Postgres.
-    record_click_event(
-        db=db,
+    # Keep the redirect path light by logging analytics after the response is prepared.
+    background_tasks.add_task(
+        record_click_event_in_background,
         url_id=url_data.id,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),

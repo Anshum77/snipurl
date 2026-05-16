@@ -3,6 +3,16 @@ from dataclasses import dataclass
 from app.cache import RedisError, redis_client
 from app.config import RATE_LIMIT_WINDOW_SECONDS
 
+RATE_LIMIT_LUA_SCRIPT = """
+local current_count = redis.call("INCR", KEYS[1])
+if current_count == 1 then
+    redis.call("EXPIRE", KEYS[1], ARGV[1])
+end
+
+local ttl = redis.call("TTL", KEYS[1])
+return {current_count, ttl}
+"""
+
 
 @dataclass
 class RateLimitResult:
@@ -29,11 +39,13 @@ def check_rate_limit(scope: str, client_id: str, limit: int) -> RateLimitResult:
     key = build_rate_limit_key(scope, client_id)
 
     try:
-        current_count = redis_client.incr(key)
-        if current_count == 1:
-            redis_client.expire(key, RATE_LIMIT_WINDOW_SECONDS)
-
-        ttl = redis_client.ttl(key)
+        # Run counter increment and initial expiry in one atomic Redis operation.
+        current_count, ttl = redis_client.eval(
+            RATE_LIMIT_LUA_SCRIPT,
+            1,
+            key,
+            RATE_LIMIT_WINDOW_SECONDS,
+        )
         retry_after = max(ttl, 0) if ttl is not None else 0
         remaining = max(limit - current_count, 0)
 

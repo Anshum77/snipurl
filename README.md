@@ -12,7 +12,7 @@ SnipURL currently supports:
 - HTTP `307` redirects
 - Redis caching for short-code lookups
 - Redis-backed per-IP rate limiting
-- click event tracking for every redirect
+- background-task click event tracking for every redirect
 - stats endpoint with total clicks and recent visits
 - PostgreSQL persistence with SQLAlchemy ORM
 - modular FastAPI backend structure
@@ -24,6 +24,7 @@ SnipURL currently supports:
 - optional `expires_in_days` support for temporary links
 - Redis cache-aside lookup for redirect performance
 - Redis-backed fixed-window rate limiting for key endpoints
+- click logging moved off the redirect hot path with FastAPI background tasks
 - `GET /{short_code}` redirects to the original URL
 - `GET /{short_code}/stats` returns click analytics for a short URL
 - request validation using Pydantic
@@ -136,6 +137,14 @@ Current implementation note:
 - The project currently uses a Redis-backed fixed-window approach because it is simple, fast, and easy to reason about.
 - A known limitation of fixed-window rate limiting is the boundary burst problem: a client can send requests at the very end of one window and again at the start of the next window, effectively creating a short burst that exceeds the intended smooth rate.
 - To address that in a future version, the rate limiter can be upgraded to a sliding-window or token-bucket approach, both of which provide smoother and fairer request control under bursty traffic.
+
+## Click Tracking Tradeoff
+
+- Click events are currently recorded with FastAPI `BackgroundTasks` so the redirect response does not wait on the analytics write.
+- This improves redirect latency because the hot path no longer blocks on a synchronous database insert for every visit.
+- The tradeoff is that `BackgroundTasks` is not a durable queue. If the application process stops at the wrong moment, an in-flight click event can be lost.
+- For this project stage, that is a reasonable balance between performance improvement and implementation simplicity.
+- In a more production-grade version, click events could be pushed to a durable queue or worker system for stronger delivery guarantees.
 
 ## Current Scope
 

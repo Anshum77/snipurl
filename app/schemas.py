@@ -14,8 +14,8 @@ class URLRequest(BaseModel):
         if value is None:
             return value
 
-        # Normalize aliases so uniqueness checks treat "Portfolio" and " portfolio " the same.
-        normalized_value = value.strip().lower()
+        # Trim surrounding whitespace but preserve the user's chosen casing.
+        normalized_value = value.strip()
         if not 3 <= len(normalized_value) <= 10:
             raise ValueError("custom_alias must be between 3 and 10 characters long")
         if not normalized_value.replace("-", "").replace("_", "").isalnum():

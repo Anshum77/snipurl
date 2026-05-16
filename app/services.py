@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app import crud
 from app.cache import get_cached_url, set_cached_url
+from app.database import SessionLocal
 from app.models import URL, ClickEvent
 
 CHARACTERS = string.ascii_letters + string.digits
@@ -147,6 +148,26 @@ def record_click_event(
         user_agent=user_agent,
         referrer=referrer,
     )
+
+
+def record_click_event_in_background(
+    url_id: int,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
+    referrer: str | None = None,
+) -> None:
+    # Background tasks run after the response starts, so they need their own DB session.
+    db = SessionLocal()
+    try:
+        record_click_event(
+            db=db,
+            url_id=url_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            referrer=referrer,
+        )
+    finally:
+        db.close()
 
 
 def build_url_stats(db: Session, url_entry: URL, base_url: str) -> dict[str, str | datetime | int | list[ClickEvent]]:
