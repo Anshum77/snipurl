@@ -1,181 +1,101 @@
-# SnipURL
+# SnipURL — FastAPI URL Shortener
 
-A URL shortener API built with FastAPI, PostgreSQL, and SQLAlchemy.
+SnipURL is a URL shortener API built with FastAPI, PostgreSQL (SQLAlchemy ORM), and Redis (cache + rate limiting). It tracks click events and exposes rich analytics (user-agent parsing + optional offline GeoIP enrichment).
 
-## Current Status
+## Highlights
 
-SnipURL currently supports:
-
-- short URL creation with generated codes
-- custom aliases such as `/portfolio`
-- optional link expiration
+- Create short URLs with secure random codes or custom aliases
+- Optional link expiration
 - HTTP `307` redirects
-- Redis caching for short-code lookups
-- Redis-backed per-IP rate limiting
-- background-task click event tracking for every redirect
-- stats endpoint with enriched analytics (UA + GeoIP) and recent visits
-- PostgreSQL persistence with SQLAlchemy ORM
-- modular FastAPI backend structure
+- Redis cache-aside for short-code lookups
+- Redis-backed fixed-window rate limiting (per IP)
+- Click tracking via FastAPI background tasks
+- Stats endpoint with enriched analytics (referrers/country/browser/os/device buckets)
 
-## Features
+## API Endpoints
 
-- `POST /shorten` creates a short URL for a long URL
-- optional `custom_alias` support for human-readable links
-- optional `expires_in_days` support for temporary links
-- Redis cache-aside lookup for redirect performance
-- Redis-backed fixed-window rate limiting for key endpoints
-- click logging moved off the redirect hot path with FastAPI background tasks
-- `GET /{short_code}` redirects to the original URL
-- `GET /{short_code}/stats` returns click analytics for a short URL
-- request validation using Pydantic
-- environment-based configuration with `.env`
+- `POST /shorten`
+- `GET /{short_code}`
+- `GET /{short_code}/stats`
 
 ## Project Structure
 
 ```text
 app/
-|-- config.py         # environment variables
-|-- cache.py          # Redis cache helpers
-|-- crud.py           # database queries
-|-- database.py       # engine, session, base
-|-- dependencies.py   # shared FastAPI dependencies
-|-- main.py           # routes and app startup
-|-- models.py         # SQLAlchemy models
-|-- schemas.py        # request/response schemas
-`-- services.py       # business logic
+|-- main.py           # FastAPI routes
+|-- config.py         # environment configuration (dotenv)
+|-- database.py       # SQLAlchemy engine + session
+|-- models.py         # ORM models (URL, ClickEvent)
+|-- schemas.py        # Pydantic request/response models
+|-- crud.py           # DB queries
+|-- services.py       # business logic + analytics aggregation
+|-- cache.py          # Redis cache helpers (URL lookups)
+|-- rate_limiter.py   # Redis fixed-window rate limiting
+|-- analytics.py      # user-agent + referrer parsing helpers
+`-- geoip.py          # offline GeoIP enrichment (optional)
 ```
 
 ## Run Locally
 
+### Prerequisites
+
+- Python 3.10+
+- PostgreSQL running locally
+- Redis running locally (optional; the API degrades gracefully without it)
+
+### Setup
+
 ```powershell
-# Clone the repo
-git clone https://github.com/Anshum77/snipurl.git
-cd snipurl
-
-# Create virtual environment
 python -m venv venv
-.\venv\Scripts\Activate.ps1   # Windows
-
-# Install dependencies
+.\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-
-# Set up environment variables
-# Copy .env.example to .env
 Copy-Item .env.example .env
+```
 
-# Update .env with your local values:
-# DATABASE_URL=postgresql://username:password@localhost:5432/snipurl
-# APP_BASE_URL=http://127.0.0.1:8000
-# REDIS_URL=redis://localhost:6379/0
-# REDIS_CACHE_TTL_SECONDS=3600
-# RATE_LIMIT_WINDOW_SECONDS=60
-# RATE_LIMIT_SHORTEN=5
-# RATE_LIMIT_STATS=30
-# RATE_LIMIT_REDIRECT=120
+### Configure `.env`
 
-# Start the server
+Minimum required:
+
+- `DATABASE_URL` (PostgreSQL connection string)
+
+Common local defaults:
+
+- `APP_BASE_URL=http://127.0.0.1:8000`
+- `REDIS_URL=redis://localhost:6379/0`
+
+### Start Server
+
+```powershell
 uvicorn app.main:app --reload
 ```
 
-Visit:
+Open Swagger UI at `http://127.0.0.1:8000/docs`.
 
-- `http://127.0.0.1:8000/docs` for Swagger UI
-- `http://127.0.0.1:8000/redoc` for ReDoc
+## GeoIP Setup (Optional)
 
-## Example Request
+GeoIP enrichment uses an offline IP2Location LITE DB11 `.BIN` file (no external API calls).
 
-Create a short URL:
+1. Download IP2Location LITE DB11 (`.BIN`) from IP2Location (ip2location.com).
+2. Set `GEOIP_DB_PATH` in `.env` to the full path of the `.BIN` file.
 
-```json
-{
-  "url": "https://github.com",
-  "custom_alias": "portfolio",
-  "expires_in_days": 7
-}
-```
-
-Example response:
-
-```json
-{
-  "short_code": "portfolio",
-  "short_url": "http://127.0.0.1:8000/portfolio",
-  "original_url": "https://github.com/",
-  "expires_at": "2026-05-14T12:00:00+00:00"
-}
-```
-
-Fetch stats:
-
-```text
-GET /portfolio/stats
-```
+If `GEOIP_DB_PATH` is not set (or the file is missing), geo fields return `null` and the API continues to work.
 
 ## Tech Stack
 
-- Backend: Python, FastAPI
+- API: FastAPI, Pydantic
 - Database: PostgreSQL, SQLAlchemy
-- Cache: Redis
-- Rate limiting: Redis fixed-window counters
-- Validation: Pydantic
+- Cache/Rate limiting: Redis
+- Analytics enrichment: `user-agents` (UA parsing), IP2Location LITE (offline GeoIP)
 - Server: Uvicorn
 
-## Rate Limiting
+## Design Notes
 
-- `POST /shorten` uses the strictest limit because URL creation is the easiest endpoint to abuse.
-- `GET /{short_code}/stats` uses a moderate limit because analytics endpoints can be scraped repeatedly.
-- `GET /{short_code}` uses a looser limit because redirects are expected to receive the highest legitimate traffic.
+- Tables are created with `Base.metadata.create_all()` for simplicity; Alembic migrations are the natural next step for production workflows.
+- Redirect click logging uses FastAPI `BackgroundTasks` to keep the redirect hot-path fast (not a durable queue).
 
-Current default policy:
-
-- `POST /shorten`: 5 requests per 60 seconds per IP
-- `GET /{short_code}/stats`: 30 requests per 60 seconds per IP
-- `GET /{short_code}`: 120 requests per 60 seconds per IP
-
-Current implementation note:
-
-- The project currently uses a Redis-backed fixed-window approach because it is simple, fast, and easy to reason about.
-- A known limitation of fixed-window rate limiting is the boundary burst problem: a client can send requests at the very end of one window and again at the start of the next window, effectively creating a short burst that exceeds the intended smooth rate.
-- To address that in a future version, the rate limiter can be upgraded to a sliding-window or token-bucket approach, both of which provide smoother and fairer request control under bursty traffic.
-
-## Click Tracking Tradeoff
-
-- Click events are currently recorded with FastAPI `BackgroundTasks` so the redirect response does not wait on the analytics write.
-- This improves redirect latency because the hot path no longer blocks on a synchronous database insert for every visit.
-- The tradeoff is that `BackgroundTasks` is not a durable queue. If the application process stops at the wrong moment, an in-flight click event can be lost.
-- For this project stage, that is a reasonable balance between performance improvement and implementation simplicity.
-- In a more production-grade version, click events could be pushed to a durable queue or worker system for stronger delivery guarantees.
-
-## GeoIP Setup
-
-SnipURL enriches click stats with GeoIP data using an offline database (no external API calls).
-
-1. Download the free IP2Location LITE DB11 database (`.BIN`) from IP2Location (ip2location.com).
-2. Save the `.BIN` file somewhere on your machine (do not commit it to git).
-3. Set `GEOIP_DB_PATH` in your `.env` to the full path of that file.
-
-If `GEOIP_DB_PATH` is not set (or the file is missing), the API still works and the geo fields return `null` (graceful fallback).
-
-## Database
-
-This project uses `Base.metadata.create_all()` at startup to create tables for the SQLAlchemy models. This keeps setup simple for a learning project.
-
-In a production setup, the next step would be Alembic migrations so schema changes are versioned and deployed safely.
-
-## Current Scope
-
-Implemented:
-
-- URL shortening
-- custom aliases
-- link expiration
-- Redis caching
-- rate limiting
-- click tracking
-- rich analytics (user-agent parsing + GeoIP enrichment + summary buckets)
-
-Planned next:
+## Planned next
 
 - Alembic migrations
-- automated tests
+- Automated tests
 - Docker setup
+
