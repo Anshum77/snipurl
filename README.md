@@ -6,14 +6,14 @@ A URL shortener API built with FastAPI, PostgreSQL, and SQLAlchemy.
 
 SnipURL currently supports:
 
-- short URL creation with random generated codes
+- short URL creation with generated codes
 - custom aliases such as `/portfolio`
 - optional link expiration
 - HTTP `307` redirects
 - Redis caching for short-code lookups
 - Redis-backed per-IP rate limiting
 - background-task click event tracking for every redirect
-- stats endpoint with total clicks and recent visits
+- stats endpoint with enriched analytics (UA + GeoIP) and recent visits
 - PostgreSQL persistence with SQLAlchemy ORM
 - modular FastAPI backend structure
 
@@ -146,6 +146,22 @@ Current implementation note:
 - For this project stage, that is a reasonable balance between performance improvement and implementation simplicity.
 - In a more production-grade version, click events could be pushed to a durable queue or worker system for stronger delivery guarantees.
 
+## GeoIP Setup
+
+SnipURL enriches click stats with GeoIP data using an offline database (no external API calls).
+
+1. Download the free IP2Location LITE DB11 database (`.BIN`) from IP2Location (ip2location.com).
+2. Save the `.BIN` file somewhere on your machine (do not commit it to git).
+3. Set `GEOIP_DB_PATH` in your `.env` to the full path of that file.
+
+If `GEOIP_DB_PATH` is not set (or the file is missing), the API still works and the geo fields return `null` (graceful fallback).
+
+## Database
+
+This project uses `Base.metadata.create_all()` at startup to create tables for the SQLAlchemy models. This keeps setup simple for a learning project.
+
+In a production setup, the next step would be Alembic migrations so schema changes are versioned and deployed safely.
+
 ## Current Scope
 
 Implemented:
@@ -156,10 +172,10 @@ Implemented:
 - Redis caching
 - rate limiting
 - click tracking
-- basic analytics endpoint
+- rich analytics (user-agent parsing + GeoIP enrichment + summary buckets)
 
 Planned next:
 
-- richer analytics
-- Docker setup
+- Alembic migrations
 - automated tests
+- Docker setup

@@ -1,15 +1,19 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-import random
+import secrets
 import string
+from collections import Counter
 
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
+from app.analytics import parse_referrer_domain, parse_user_agent
 from app import crud
 from app.cache import get_cached_url, set_cached_url
 from app.database import SessionLocal
+from app.geoip import lookup_geo
 from app.models import URL, ClickEvent
+from app.schemas import ClickBucket, ClickEventEnrichedResponse, URLAnalyticsSummary
 
 CHARACTERS = string.ascii_letters + string.digits
 MAX_SHORT_CODE_RETRIES = 5
@@ -24,7 +28,7 @@ class RedirectURLData:
 
 
 def generate_short_code(length: int = 6) -> str:
-    return "".join(random.choices(CHARACTERS, k=length))
+    return "".join(secrets.choice(CHARACTERS) for _ in range(length))
 
 
 def build_expiration_datetime(expires_in_days: int | None) -> datetime | None:
@@ -171,8 +175,8 @@ def record_click_event_in_background(
 
 
 def build_url_stats(db: Session, url_entry: URL, base_url: str) -> dict[str, str | datetime | int | list[ClickEvent]]:
-    # Keep the stats endpoint lightweight by returning a click count plus the most recent visits.
-    recent_clicks = crud.get_recent_clicks_for_url(db, url_entry.id)
+    clicks_for_analytics = crud.get_recent_clicks_for_url(db, url_entry.id, limit=1000)
+    recent_clicks = clicks_for_analytics[:10]
 
     return {
         "short_code": url_entry.short_code,
@@ -181,4 +185,61 @@ def build_url_stats(db: Session, url_entry: URL, base_url: str) -> dict[str, str
         "expires_at": url_entry.expires_at,
         "total_clicks": crud.get_click_count_for_url(db, url_entry.id),
         "recent_clicks": recent_clicks,
+        "analytics": build_analytics_summary(clicks_for_analytics),
+        "recent_clicks_enriched": [enrich_click_event(click) for click in recent_clicks],
     }
+
+
+def enrich_click_event(click_event: ClickEvent) -> ClickEventEnrichedResponse:
+    return ClickEventEnrichedResponse(
+        clicked_at=click_event.clicked_at,
+        ip_address=click_event.ip_address,
+        user_agent=click_event.user_agent,
+        referrer=click_event.referrer,
+        ua=parse_user_agent(click_event.user_agent),
+        geo=lookup_geo(click_event.ip_address),
+        referrer_domain=parse_referrer_domain(click_event.referrer),
+    )
+
+
+def _top_buckets(counter: Counter[str], limit: int = 5) -> list[ClickBucket]:
+    return [ClickBucket(label=label, count=count) for label, count in counter.most_common(limit)]
+
+
+def build_analytics_summary(clicks: list[ClickEvent]) -> URLAnalyticsSummary:
+    unique_ips = {click.ip_address for click in clicks if click.ip_address}
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=24)
+    clicks_last_24h = sum(
+        1 for click in clicks if click.clicked_at is not None and click.clicked_at >= cutoff
+    )
+
+    referrer_counter: Counter[str] = Counter()
+    country_counter: Counter[str] = Counter()
+    browser_counter: Counter[str] = Counter()
+    os_counter: Counter[str] = Counter()
+    device_counter: Counter[str] = Counter()
+
+    for click in clicks:
+        referrer_domain = parse_referrer_domain(click.referrer)
+        referrer_counter[referrer_domain or "direct"] += 1
+
+        geo = lookup_geo(click.ip_address)
+        country_counter[(geo.country if geo and geo.country else "unknown")] += 1
+
+        ua = parse_user_agent(click.user_agent)
+        browser_counter[(ua.browser if ua and ua.browser else "unknown")] += 1
+        os_counter[(ua.os if ua and ua.os else "unknown")] += 1
+        device_counter[(ua.device if ua and ua.device else "unknown")] += 1
+
+    return URLAnalyticsSummary(
+        total_clicks=len(clicks),
+        unique_ips=len(unique_ips),
+        clicks_last_24h=clicks_last_24h,
+        top_referrers=_top_buckets(referrer_counter),
+        clicks_by_country=_top_buckets(country_counter),
+        clicks_by_browser=_top_buckets(browser_counter),
+        clicks_by_os=_top_buckets(os_counter),
+        clicks_by_device=_top_buckets(device_counter),
+    )
