@@ -135,7 +135,14 @@ def get_url_for_redirect(db: Session, short_code: str) -> RedirectURLData | None
 
 def is_url_expired(expires_at: datetime | None) -> bool:
     # Links without an expiration date stay active indefinitely.
-    return expires_at is not None and expires_at <= datetime.now(timezone.utc)
+    if expires_at is None:
+        return False
+
+    # SQLite may return timezone-naive datetimes; treat them as UTC for comparisons.
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    return expires_at <= datetime.now(timezone.utc)
 
 
 def record_click_event(
@@ -211,9 +218,15 @@ def build_analytics_summary(clicks: list[ClickEvent]) -> URLAnalyticsSummary:
 
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=24)
-    clicks_last_24h = sum(
-        1 for click in clicks if click.clicked_at is not None and click.clicked_at >= cutoff
-    )
+    clicks_last_24h = 0
+    for click in clicks:
+        clicked_at = click.clicked_at
+        if clicked_at is None:
+            continue
+        if clicked_at.tzinfo is None:
+            clicked_at = clicked_at.replace(tzinfo=timezone.utc)
+        if clicked_at >= cutoff:
+            clicks_last_24h += 1
 
     referrer_counter: Counter[str] = Counter()
     country_counter: Counter[str] = Counter()
