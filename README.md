@@ -83,7 +83,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Tests use SQLite in-memory and require no running PostgreSQL or Redis instance.
+Tests use an isolated SQLite database and require no running PostgreSQL or Redis instance.
 
 ## Run with Docker (Development)
 
@@ -140,7 +140,8 @@ If `GEOIP_DB_PATH` is not set (or the file is missing), geo fields return `null`
 - Database: PostgreSQL, SQLAlchemy
 - Cache/Rate limiting: Redis
 - Analytics enrichment: `user-agents` (UA parsing), IP2Location LITE (offline GeoIP)
-- Testing: pytest, httpx, pytest-mock (SQLite in-memory)
+- Frontend: React, Vite
+- Testing: pytest, httpx, pytest-mock (SQLite)
 - Server: Uvicorn
 
 ## Design Notes
