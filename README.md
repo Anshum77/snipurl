@@ -85,6 +85,46 @@ pytest
 
 Tests use SQLite in-memory and require no running PostgreSQL or Redis instance.
 
+## Run with Docker (Development)
+
+This project includes a dev-friendly Docker Compose setup (API + Postgres + Redis).
+
+```powershell
+docker compose up --build
+```
+
+- API: `http://localhost:8000`
+- Docs: `http://localhost:8000/docs`
+
+Stop containers:
+
+```powershell
+docker compose down
+```
+
+Reset Postgres data (deletes the volume):
+
+```powershell
+docker compose down -v
+```
+
+## Frontend (React + Vite)
+
+The repo includes a minimal frontend under `frontend/`.
+
+```powershell
+cd frontend
+Copy-Item .env.example .env
+npm install
+npm run dev
+```
+
+By default the UI expects the API at `http://localhost:8000`. You can change it via `frontend/.env`:
+
+```text
+VITE_API_BASE_URL=http://localhost:8000
+```
+
 ## GeoIP Setup (Optional)
 
 GeoIP enrichment uses an offline IP2Location LITE DB11 `.BIN` file (no external API calls).
@@ -108,7 +148,3 @@ If `GEOIP_DB_PATH` is not set (or the file is missing), geo fields return `null`
 - Tables are created with `Base.metadata.create_all()` for simplicity; Alembic migrations are the natural next step for production workflows.
 - Redirect click logging uses FastAPI `BackgroundTasks` to keep the redirect hot-path fast (not a durable queue).
 - Rate limiting uses a Lua script to make the Redis `INCR` + `EXPIRE` sequence atomic, avoiding the key-without-TTL bug common in naive fixed-window implementations.
-
-## Planned Next
-
-- Docker setup
