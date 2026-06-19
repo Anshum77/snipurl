@@ -152,6 +152,8 @@ If `GEOIP_DB_PATH` is not set (or the file is missing), geo fields return `null`
 
 ## Performance Benchmarks
 
+Benchmark scripts and raw benchmark results are available in `/benchmarks`.
+
 ### Redirect Latency (Cold vs Warm Cache)
 
 | Scenario | Latency |
@@ -160,7 +162,26 @@ If `GEOIP_DB_PATH` is not set (or the file is missing), geo fields return `null`
 | Warm Cache (avg) | 13.74 ms |
 
 Result:
-- ~99% lower latency for repeated redirects using Redis cache-aside lookups.
+- Reduced repeat redirect latency by ~99% using Redis cache-aside lookups.
+
+### Cached Redirect Latency Distribution (1000 Requests)
+
+Environment:
+- Redis cache warm
+- Docker Compose (FastAPI + PostgreSQL + Redis)
+- Localhost testing
+
+| Metric | Latency |
+|----------|----------|
+| Average | 6.63 ms |
+| P50 | 6.42 ms |
+| P95 | 8.26 ms |
+| P99 | 9.95 ms |
+| Min | 5.52 ms |
+| Max | 12.38 ms |
+
+Result:
+- Maintained sub-10 ms P99 latency across 1000 cached redirect requests.
 
 ### End-to-End Workflow
 
