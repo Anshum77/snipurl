@@ -44,18 +44,3 @@ Latency reduction:
 ## Conclusion
 
 Redis cache-aside lookups reduced repeat redirect latency by approximately 99% compared to a cold-cache request in the local Docker environment.
-
-## Benchmarks
-
-### Redirect Latency (Cold vs Warm Cache)
-
-| Scenario | Latency |
-|-----------|-----------|
-| Cold Cache | 1461.88 ms |
-| Warm Cache (avg) | 13.74 ms |
-
-Result:
-
-- ~99% lower latency for repeated redirects using Redis cache-aside lookups.
-
-Benchmark scripts and methodology are available in `/benchmarks`.

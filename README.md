@@ -149,3 +149,27 @@ If `GEOIP_DB_PATH` is not set (or the file is missing), geo fields return `null`
 - Tables are created with `Base.metadata.create_all()` for simplicity; Alembic migrations are the natural next step for production workflows.
 - Redirect click logging uses FastAPI `BackgroundTasks` to keep the redirect hot-path fast (not a durable queue).
 - Rate limiting uses a Lua script to make the Redis `INCR` + `EXPIRE` sequence atomic, avoiding the key-without-TTL bug common in naive fixed-window implementations.
+
+## Performance Benchmarks
+
+### Redirect Latency (Cold vs Warm Cache)
+
+| Scenario | Latency |
+|-----------|-----------|
+| Cold Cache | 1461.88 ms |
+| Warm Cache (avg) | 13.74 ms |
+
+Result:
+- ~99% lower latency for repeated redirects using Redis cache-aside lookups.
+
+### End-to-End Workflow
+
+| Operation | Average |
+|------------|------------|
+| URL Creation | 13.60 ms |
+| Redirect | 7.95 ms |
+| Stats Retrieval | 12.55 ms |
+| Total Workflow | 34.13 ms |
+
+Result:
+- Complete URL lifecycle averages approximately 34 ms.
